@@ -21,9 +21,10 @@ const jobQueue = new ParallelJobQueue(lastCallback=console.log, options);
 
 // add job to jobQueue
 let count = 1;
-while(count < 5){
-    args = 1000;
-    jobQueue.addJob(delayedLog, args, jobTimeOutSec=5);
+const SLEEPTIME = 2000;
+const JOBTIMEOUTSEC = 5;
+while(count < 10){
+    jobQueue.addJob(delayedLog, SLEEPTIME, JOBTIMEOUTSEC);
     count ++;
 }
 
@@ -42,7 +43,7 @@ jobQueue.on('jobError', (err, job) => {
 })
 
 jobQueue.on('jobTimeOut', (err, job) => {
-    console.log(`job TimeOuted [${job.jobNum}]`);
+    console.log(`job TimeOut [${job.jobNum}]`);
 })
 
 // copy file sample
