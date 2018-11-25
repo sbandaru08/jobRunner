@@ -55,11 +55,15 @@ class Job {
     start() {
         // return Promise
         // return this.jobFunction(this.args);
-        // need to fix timer ( after Promise.race resolved, timer run)
-        this.timer = new Promise((resolve,reject) => {          
-            setTimeout(reject, this.jobTimeOutSec * 1000, {code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`})
+        // need to fix timer ( after Promise.race resolved, timer run )
+        this.timerPromise = new Promise((resolve,reject) => {          
+            //this.timer = setTimeout(reject, this.jobTimeOutSec * 1000, {code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`})
+            this.timer = setTimeout(() => {
+                console.log('timer done')
+                reject({code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`});
+            },this.jobTimeOutSec * 1000)
         })
-        return Promise.race([this.jobFunction(this.args), this.timer]);
+        return Promise.race([this.jobFunction(this.args), this.timerPromise]);
     }
 
     setRunning(){
@@ -117,7 +121,7 @@ class ParallelJobQueue extends EventEmitter {
         console.log(`job start jobNum = [${job.jobNum}]`);  
         try {
             const jobResult = await job.start();   
-            delete job.timer;         
+            clearTimeout(job.timer);       
             console.log(`job done jobNum = [${job.jobNum}]`); 
             this.emit('jobDone', jobResult, job); // jobDone but job Callback not yet done!
             job.setResolved();
@@ -155,9 +159,8 @@ class ParallelJobQueue extends EventEmitter {
     
 
     _notifyProgress() {
-        console.log(`count of jobs processed : ${this.totalResults.length}`);    
-        console.log(`count of jobs successed : ${this._getSuccessedJob().length}`);
-        console.log(`count of jobs failed : ${this._getFailedJob().length}`);
+        const progress = `processed : ${this.totalResults.length}, success : ${this._getSuccessedJob().length}, failure : ${this._getFailedJob().length}`
+        console.log(`job result : ${progress}`);
     }
 
     _getSuccessedJob(){
@@ -195,7 +198,7 @@ class ParallelJobQueue extends EventEmitter {
         return (this.totalResults.length === this.jobLength);
     }
 
-    async start(concurrency){
+    start(concurrency){
         while(this.jobsToRun.length > 0 && !this.cancelled && this.jobsRunning.length < concurrency){
             const job = this.jobsToRun.shift();
             this._runParallel(job);
