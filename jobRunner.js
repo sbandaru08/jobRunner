@@ -1,7 +1,7 @@
 /*
 Usage 
 
-1) Make Job Function as Promise
+1) Make repeat job Function as Promise
    * args can be object, string or array 
    function job(args, callback){       
        const {x,y,z} = args;
@@ -12,13 +12,13 @@ Usage
 
 2) Set new ParallelJobQueue
    @lastCallback : callback function called when all jobs done 
-   @saveJobResult (true/false) : default false
+   @options.saveJobResult (true/false) : default false
                   whether accumulate all promised job's result on totalResult Array
                   "true" can make out of memory
                   "false" convert job's result small object({jobNum:n, success:true}) and
                   push to totalResult Array ( no OOM )
-   @stopOnJobFailed (true/false) : default true
-   const jobQueue = new ParallelJobQueue(lastCallback, saveJobResult=false, stopOnError=false)
+   @options.stopOnJobFailed (true/false) : default true
+   const jobQueue = new ParallelJobQueue(lastCallback, options)
 
 3) Add job function to jobQueue
    @job : job function
@@ -34,7 +34,7 @@ Usage
    jobQueue.start(5)  
 
 5) events
-   jobQueue.on('jobDone', (jobResult, jobObj) => {})
+   jobQueue.on('jobDone', (jobResult, jobObj) => {}) // each job done
    jobQueue.on('jobError', (error, jobObj) => {})
 */
 
@@ -50,15 +50,14 @@ class Job {
         this.paused = false;
         this.success = undefined;
         this.jobTimeOutSec = jobTimeOutSec ? jobTimeOutSec : 3600;
+        this.logger = global.logger ? global.logger : console;
     }
 
     start() {
         // return Promise
-        // return this.jobFunction(this.args);
         const timerPromise = new Promise((resolve,reject) => {          
-            //this.timer = setTimeout(reject, this.jobTimeOutSec * 1000, {code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`})
-            this.timer = setTimeout(() => {
-                console.log('timeout occurred')
+             this.timer = setTimeout(() => {
+                this.logger.error('timeout occurred');
                 reject({code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`});
             },this.jobTimeOutSec * 1000)
         })
@@ -93,6 +92,7 @@ class ParallelJobQueue extends EventEmitter {
         this.totalResults = [];  
         this.paused = false;
         this.cancelled = false;
+        this.logger = global.logger ? global.logger : console;
         if (options && typeof(options) === 'object') {
             this.saveJobResults = options.hasOwnProperty('saveJobResults') ? options.saveJobResults : false;
             this.stopOnJobFailed = options.hasOwnProperty('stopOnJobFailed') ? options.stopOnJobFailed : true;
@@ -117,20 +117,20 @@ class ParallelJobQueue extends EventEmitter {
 
         this._addToRunning(job);            
         job.setRunning();
-        console.log(`job start jobNum = [${job.jobNum}]`);  
+        this.logger.info(`job start jobNum = [${job.jobNum}]`);  
         try {
             const jobResult = await job.start();   
             clearTimeout(job.timer);       
-            console.log(`job done jobNum = [${job.jobNum}]`); 
-            this.emit('jobDone', jobResult, job); // jobDone but job Callback not yet done!
+            this.logger.info(`job done jobNum = [${job.jobNum}]`); 
+            this.emit('jobDone', jobResult, job); // job done, but job Callback may not be done yet!
             job.setResolved();
-            const resultToSave = {jobNum:job.jobNum, success:true};
-            this.saveJobResults ? resultToSave.jobResult = jobResult : resultToSave.jobResult = undefined;
-            this._addTotalResult(resultToSave);             
+            const minResult = {jobNum:job.jobNum, success:true};
+            this.saveJobResults ? minResult.jobResult = jobResult : minResult.jobResult = undefined;
+            this._addTotalResult(minResult);             
             this._delFromRunning(job.jobNum);
 
         } catch (err) {
-            console.error(`job failed jobNum = [${job.jobNum}], err = [${err}]`);
+            this.logger.error(`job failed jobNum = [${job.jobNum}], err = [${err}]`);
             switch(err.code) {
                 case 'TIMEOUT' :
                     this.emit('jobTimeOut', err, job);
@@ -154,7 +154,7 @@ class ParallelJobQueue extends EventEmitter {
 
     _notifyProgress() {
         const progress = `processed : ${this.totalResults.length}, success : ${this._getSuccessedJob().length}, failure : ${this._getFailedJob().length}`
-        console.log(`job result : ${progress}`);
+        //this.logger.trace(`job result : ${progress}`);
     }
 
     _getSuccessedJob(){

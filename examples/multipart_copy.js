@@ -26,7 +26,7 @@ function _stat(fname) {
 
 function _read(readFD, buff, readOffset) {
     return new Promise((resolve,reject) => {
-        console.log(buff.length)
+        //console.log(buff.length)
         fs.read(readFD, buff, 0, buff.length, readOffset, (err,bytesRead,outBuff) => {
             if(err) reject(err);
             resolve({bytesRead:bytesRead, outBuff : outBuff});
