@@ -55,15 +55,14 @@ class Job {
     start() {
         // return Promise
         // return this.jobFunction(this.args);
-        // need to fix timer ( after Promise.race resolved, timer run )
-        this.timerPromise = new Promise((resolve,reject) => {          
+        const timerPromise = new Promise((resolve,reject) => {          
             //this.timer = setTimeout(reject, this.jobTimeOutSec * 1000, {code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`})
             this.timer = setTimeout(() => {
-                console.log('timer done')
+                console.log('timeout occurred')
                 reject({code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`});
             },this.jobTimeOutSec * 1000)
         })
-        return Promise.race([this.jobFunction(this.args), this.timerPromise]);
+        return Promise.race([this.jobFunction(this.args), timerPromise]);
     }
 
     setRunning(){
@@ -143,11 +142,6 @@ class ParallelJobQueue extends EventEmitter {
             this._addTotalResult({jobNum:job.jobNum, success:false});   
             this._delFromRunning(job.jobNum);
             if(this.stopOnJobFailed) this.cancel();
-            /*
-            if(err.code !== 'RequestAbortedError'){
-                this.saveJobResults ? this._addTotalResult(err) : this._addTotalResult({jobNum:job.jobNum, success:false});
-            }
-            */
         } finally {
             if(this.jobsToRun.length > 0 && !this.paused && !this.cancelled){
                 const nextJob = this.jobsToRun.shift();
