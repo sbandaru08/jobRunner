@@ -3,8 +3,8 @@ This is parallel task runner base on javascript ( node.js and browser )
 
 ## Feature
 - simple usage
-- can add your custom event listener to repeateed job
-- can choose where stop on any job failure
+- can add your custom event listener to repeated job
+- can choose whether stop or continue on any job failure
 - can use all job's results as array
 ```javascript
 {
@@ -25,6 +25,7 @@ git clone https://github.com/ryuken73/jobRunner.git
 ```
 2. import module
 ```javascript
+// import module
 const ParallelJobQueue = require('../jobRunner');
 ```
 
@@ -91,10 +92,10 @@ jobQueue.on('jobTimeOut', (err, job) => {
 
 ## Examples
 
-1. simple_console_log.js
+1. simple_console_log.js 
 2. folder_copy.js
-3. multipart_cpopy.js
-4. multipart_md5.js
+3. multipart_copy.js : parallel copy
+4. multipart_md5.js : parallel md5 hash calculation 
 
 ## License
 
