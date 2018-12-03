@@ -5,22 +5,24 @@ This is parallel task runner base on javascript ( node.js and browser )
 - simple usage
 - can add your custom event listener to repeated job
 - can choose whether stop or continue on any job failure
-- can use all job's results as array
+- can get all job's results as array
 ```javascript
-{
-    jobNum:number of job, 
-    success:true/false, 
-    jobResult:result of job 
+// all job's results array
+[{
+    jobNum: "number of job", 
+    success: true/false, 
+    jobResult: "result of job" 
     // jobResult can make out of memory exception.
     // only provided if you set "saveJobResults" as true
-}
+},
+]
 ```
 
 ## Usage
 
 1. git clone
 ```bash
-# Clone this repository
+# Clone repository
 git clone https://github.com/ryuken73/jobRunner.git
 ```
 2. import module
@@ -33,13 +35,13 @@ const ParallelJobQueue = require('../jobRunner');
 ```javascript
 const options = {
     saveJobResults : true, 
-    //save each job's total result
-    //total result will be provided to lastcallback 
-    //Be carefull. this can make large memory llocation
-    //process each jobs result in 'jobDone' listener
-    //example) multipart_md5.js
+    //save each job's total result into array.
+    //saved results will be provided to lastcallback. 
+    //!!Be carefull! - this may cause large memory llocation.
+    //!!recomment processing each job's result in 'jobDone' listener
+    //  example) multipart_md5.js
     stopOnJobFailed : true,
-    //when one job failed, stop jobQueue
+    //when one job failed, stop whole processing or not
 }
 const jobQueue = new ParallelJobQueue(lastCallback=console.log, options);
 ```
