@@ -1,219 +1,165 @@
-/*
-Usage 
-
-1) Make repeat job Function as Promise
-   * args can be object, string or array 
-   function job(args, callback){       
-       const {x,y,z} = args;
-       return new Promise(...{
-
-       })
-   }
-
-2) Set new ParallelJobQueue
-   @lastCallback : callback function called when all jobs done 
-   @options.saveJobResult (true/false) : default false
-                  whether accumulate all promised job's result on totalResult Array
-                  "true" can make out of memory
-                  "false" convert job's result small object({jobNum:n, success:true}) and
-                  push to totalResult Array ( no OOM )
-   @options.stopOnJobFailed (true/false) : default true
-   const jobQueue = new ParallelJobQueue(lastCallback, options)
-
-3) Add job function to jobQueue
-   @job : job function
-   @args : argument for job (object), if you need multiple argument, use object;
-   
-   jobQueue.addJob(job, args) 
-   
-   * if job function is class method and need access "this", use bind   
-   jobQueue.addJob(job.bind(this), args) 
-
-
-4) at last, run job with concurrency constant
-   jobQueue.start(5)  
-
-5) events
-   jobQueue.on('jobDone', (jobResult, jobObj) => {}) // each job done
-   jobQueue.on('jobError', (error, jobObj) => {})
-*/
-
 const EventEmitter = require('events');
 
-class Job {   
-
-    constructor(jobFunction, args, jobNum, jobTimeOutSec){
+// Job class handles individual jobs
+class Job {
+    constructor(jobFunction, args, jobNum, jobTimeOutSec = 3600) {
         this.jobFunction = jobFunction;
         this.args = args;
         this.jobNum = jobNum;
         this.running = false;
-        this.paused = false;
         this.success = undefined;
-        this.jobTimeOutSec = jobTimeOutSec ? jobTimeOutSec : 3600;
-        this.logger = global.logger ? global.logger : console;
+        this.jobTimeOutSec = jobTimeOutSec;
+        this.timer = null;
+        this.logger = global.logger || console;
     }
 
-    start() {
-        // return Promise
-        const timerPromise = new Promise((resolve,reject) => {          
-             this.timer = setTimeout(() => {
-                this.logger.error('timeout occurred');
-                reject({code : 'TIMEOUT', message : `execute too long : over timeout ${this.jobTimeOutSec} sec`});
-            },this.jobTimeOutSec * 1000)
-        })
-        return Promise.race([this.jobFunction(this.args), timerPromise]);
+    async start() {
+        const timerPromise = new Promise((_, reject) => {
+            this.timer = setTimeout(() => {
+                this.logger.error('Job timed out');
+                reject({ code: 'TIMEOUT', message: `Job execution exceeded timeout of ${this.jobTimeOutSec} seconds` });
+            }, this.jobTimeOutSec * 1000);
+        });
+
+        try {
+            const result = await Promise.race([this.jobFunction(this.args), timerPromise]);
+            clearTimeout(this.timer);
+            return result;
+        } catch (error) {
+            clearTimeout(this.timer);
+            throw error;
+        }
     }
 
-    setRunning(){
+    setRunning() {
         this.running = true;
     }
-    setResolved(){        
+
+    setResolved() {
         this.running = false;
         this.success = true;
     }
-    setRejected(){        
+
+    setRejected() {
         this.running = false;
         this.success = false;
     }
-    isRunning(){
+
+    isRunning() {
         return this.running;
     }
 }
 
-
+// ParallelJobQueue manages the execution of multiple jobs
 class ParallelJobQueue extends EventEmitter {
-
-    constructor(lastCallback, options){
+    constructor(lastCallback, options = {}) {
         super();
-        this.jobLength = 0;
         this.jobsToRun = [];
         this.jobsRunning = [];
-        this.lastCallback = lastCallback;   
-        this.totalResults = [];  
+        this.totalResults = [];
+        this.lastCallback = lastCallback;
         this.paused = false;
         this.cancelled = false;
-        this.logger = global.logger ? global.logger : console;
-        if (options && typeof(options) === 'object') {
-            this.saveJobResults = options.hasOwnProperty('saveJobResults') ? options.saveJobResults : false;
-            this.stopOnJobFailed = options.hasOwnProperty('stopOnJobFailed') ? options.stopOnJobFailed : true;
-         } else {
-            this.saveJobResults = false;
-            this.stopOnJobFailed = true;
-        }
+        this.logger = global.logger || console;
+
+        // Configuration for handling results and failure behaviors
+        this.saveJobResults = options.saveJobResults || false;
+        this.stopOnJobFailed = options.stopOnJobFailed !== undefined ? options.stopOnJobFailed : true;
     }
 
-    addJob(jobFunction, args, jobTimeOutSec){
-        try {
-            const jobNum = this.jobLength + 1;
-            const job = new Job(jobFunction, args, jobNum, jobTimeOutSec);
-            this.jobsToRun.push(job);    
-            this.jobLength ++ ;
-        } catch (err) {
-            console.error(err)
-        } 
+    addJob(jobFunction, args, jobTimeOutSec) {
+        const jobNum = this.jobsToRun.length + 1;
+        const job = new Job(jobFunction, args, jobNum, jobTimeOutSec);
+        this.jobsToRun.push(job);
     }
-    
-    async _runParallel(job) {
 
-        this._addToRunning(job);            
+    async _runJob(job) {
+        this._addToRunning(job);
         job.setRunning();
-        this.logger.info(`job start jobNum = [${job.jobNum}]`);  
+
         try {
-            const jobResult = await job.start();   
-            clearTimeout(job.timer);       
-            this.logger.info(`job done jobNum = [${job.jobNum}]`); 
-            this.emit('jobDone', jobResult, job); // job done, but job Callback may not be done yet!
+            const jobResult = await job.start();
+            this.logger.info(`Job ${job.jobNum} done`);
+            this.emit('jobDone', jobResult, job);
             job.setResolved();
-            const minResult = {jobNum:job.jobNum, success:true};
-            this.saveJobResults ? minResult.jobResult = jobResult : minResult.jobResult = undefined;
-            this._addTotalResult(minResult);             
+            this._addTotalResult({ jobNum: job.jobNum, success: true, jobResult });
+        } catch (err) {
+            this.logger.error(`Job ${job.jobNum} failed, Error: ${err.message}`);
+            this.emit('jobError', err, job);
+            job.setRejected();
+            this._addTotalResult({ jobNum: job.jobNum, success: false });
+
+            if (this.stopOnJobFailed) {
+                this.cancel();
+            }
+        } finally {
             this._delFromRunning(job.jobNum);
 
-        } catch (err) {
-            this.logger.error(`job failed jobNum = [${job.jobNum}], err = [${err}]`);
-            switch(err.code) {
-                case 'TIMEOUT' :
-                    this.emit('jobTimeOut', err, job);
-                    break;
-                default :
-                    this.emit('jobError', err, job);                
+            if (this.jobsToRun.length > 0 && !this.paused && !this.cancelled) {
+                this._processNextJob();
             }
-            job.setRejected();
-            this._addTotalResult({jobNum:job.jobNum, success:false});   
-            this._delFromRunning(job.jobNum);
-            if(this.stopOnJobFailed) this.cancel();
-        } finally {
-            if(this.jobsToRun.length > 0 && !this.paused && !this.cancelled){
-                const nextJob = this.jobsToRun.shift();
-                this._runParallel(nextJob);
-            }   
-            this._isAllJobDone() ? this.lastCallback(this.totalResults) : this._notifyProgress(); 
+
+            this._isAllJobDone() ? this.lastCallback(this.totalResults) : this._notifyProgress();
         }
     }
-    
+
+    _processNextJob() {
+        const nextJob = this.jobsToRun.shift();
+        this._runJob(nextJob);
+    }
 
     _notifyProgress() {
-        const progress = `processed : ${this.totalResults.length}, success : ${this._getSuccessedJob().length}, failure : ${this._getFailedJob().length}`
-        //this.logger.trace(`job result : ${progress}`);
+        const progress = `Processed: ${this.totalResults.length}, Success: ${this._getSuccessedJob().length}, Failure: ${this._getFailedJob().length}`;
+        // this.logger.trace(`Job progress: ${progress}`);
     }
 
-    _getSuccessedJob(){
-        return this.totalResults.filter((result) => {
-            return result.success;
-        })
+    _getSuccessedJob() {
+        return this.totalResults.filter(result => result.success);
     }
 
-    _getFailedJob(){
-        return this.totalResults.filter((result) => {
-            return !result.success;
-        })
+    _getFailedJob() {
+        return this.totalResults.filter(result => !result.success);
     }
 
-    _addToRunning(job){
+    _addToRunning(job) {
         this.jobsRunning.push(job);
     }
 
-    _getJobsRunning(){ 
-        return this.jobsRunning;
+    _delFromRunning(jobNum) {
+        const index = this.jobsRunning.findIndex(job => job.jobNum === jobNum);
+        if (index >= 0) {
+            this.jobsRunning.splice(index, 1);
+        }
     }
 
-    _delFromRunning(jobNum){
-        const index = this.jobsRunning.findIndex((job) => {
-            return job.jobNum == jobNum;
-        })
-        delete this.jobsRunning.splice(index,1);
-    }
-
-    _addTotalResult(result){
+    _addTotalResult(result) {
         this.totalResults.push(result);
     }
 
-    _isAllJobDone(){
-        return (this.totalResults.length === this.jobLength);
+    _isAllJobDone() {
+        return this.totalResults.length === this.jobsToRun.length;
     }
 
-    start(concurrency){
-        while(this.jobsToRun.length > 0 && !this.cancelled && this.jobsRunning.length < concurrency){
-            const job = this.jobsToRun.shift();
-            this._runParallel(job);
-        }          
+    start(concurrency) {
+        const jobsToRun = Math.min(concurrency, this.jobsToRun.length);
+
+        for (let i = 0; i < jobsToRun; i++) {
+            this._processNextJob();
+        }
     }
 
-    pause(){
+    pause() {
         this.paused = true;
     }
 
-    cancel(){
+    cancel() {
         this.cancelled = true;
     }
 
-    resume(concurrency){
+    resume(concurrency) {
         this.paused = false;
-        this.jobsToRun = [...this.jobsRunning,...this.jobsToRun];
-        this.jobsRunning = [];
-        while(this.jobsToRun.length > 0 && this.jobsRunning.length < concurrency){
-            const job = this.jobsToRun.shift();
-            this._runParallel(job);
+        while (this.jobsToRun.length > 0 && this.jobsRunning.length < concurrency) {
+            this._processNextJob();
         }
     }
 }
